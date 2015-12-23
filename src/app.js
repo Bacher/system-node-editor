@@ -4,7 +4,7 @@ import colors from 'colors';
 
 const DELIMITER = '  ';
 
-const FIELDS = ['id', 'active', 'type', 'project', 'host', 'count', 'flags'];
+const FIELDS = ['auto', 'active', 'folder', 'project', 'server', 'group', 'args', 'count', 'comment'];
 const FIELDS_CAPITALIZED = FIELDS.map(field => _.capitalize(field));
 
 const out = process.stdout;
@@ -46,6 +46,7 @@ class App {
 
             if (command) {
                 switch (command[1]) {
+                    case 'l':
                     case 'list':
                         result = true;
                         break;
@@ -59,14 +60,20 @@ class App {
                     case 'rm':
                         result = this._rm(command);
                         break;
+                    case 'w':
                     case 'write':
                         await this._write();
                         result = true;
+                        break;
+                    case 'toggle':
+                    case 't':
+                        result = this._toggle(command);
                         break;
                     case 'help':
                         this._printHelp();
                         result = false;
                         break;
+                    case 'q':
                     case 'quit':
                         this._close();
                         result = false;
@@ -75,6 +82,10 @@ class App {
                         writeLine('Unknown command.');
                         result = false;
                 }
+
+            } else {
+                writeLine('Unknown command.');
+                result = false;
             }
 
             if (result) {
@@ -98,7 +109,7 @@ class App {
             type = 'project';
         }
 
-        if (type && type !== 'project' && type !== 'admin') {
+        if (type && type !== 'project' && type !== 'admin' && type !== 'process') {
             writeLine('Bad type.');
             return;
         }
@@ -107,26 +118,39 @@ class App {
             if (!type || type === 'admin') {
                 this._lines.push({
                     new: true,
-                    id: this._getNextIndex(),
+                    auto: this._getNextIndex(),
                     active: 'yes',
-                    type: 'admin',
+                    folder: 'admin',
                     project,
-                    host: host ? host : 'virt1',
-                    count: 1,
-                    flags: '--dev'
+                    server: host ? host : 'virt1',
+                    args: '--config.override=local',
+                    count: 1
                 });
             }
 
             if (!type || type === 'project') {
                 this._lines.push({
                     new: true,
-                    id: this._getNextIndex(),
+                    auto: this._getNextIndex(),
                     active: 'yes',
-                    type: 'projects',
+                    folder: 'projects',
                     project,
-                    host: host ? host : 'virt2',
-                    count: 1,
-                    flags: '--dev'
+                    server: host ? host : 'virt2',
+                    args: '--config.override=local',
+                    count: 1
+                });
+            }
+
+            if (type === 'process') {
+                this._lines.push({
+                    new: true,
+                    auto: this._getNextIndex(),
+                    active: 'yes',
+                    folder: 'process',
+                    project,
+                    server: host ? host : 'virt2',
+                    args: '--config.override=local',
+                    count: 1
                 });
             }
         } else {
@@ -139,7 +163,7 @@ class App {
 
     _getNextIndex() {
         return this._lines.reduce((memo, line) => {
-            return Math.max(memo, line.id);
+            return Math.max(memo, line.auto);
         }, 0) + 1;
     }
 
@@ -150,10 +174,10 @@ class App {
             const prevLength = this._lines.length;
 
             args.split(/\s+/).forEach(arg => {
-                const id = Number(arg);
+                const auto = Number(arg);
 
-                if (!isNaN(id)) {
-                    const index = _.findIndex(this._lines, { id });
+                if (!isNaN(auto)) {
+                    const index = _.findIndex(this._lines, { auto });
 
                     if (index !== -1) {
                         this._lines.splice(index, 1);
@@ -177,13 +201,37 @@ class App {
         return true;
     }
 
+    _toggle(command) {
+        const arg = command[2];
+        const auto = Number(arg);
+
+        var success = false;
+
+        if (!isNaN(auto)) {
+            toggle(_.find(this._lines, { auto }));
+
+        } else {
+            this._lines.filter(line => line.project === arg).forEach(toggle);
+        }
+
+        function toggle(line) {
+            if (line) {
+                success = true;
+                line.changed = true;
+                line.active = line.active === 'yes' ? 'no' : 'yes';
+            }
+        }
+
+        return success;
+    }
+
     _sortLines() {
         this._lines = this._lines
-            .sort((line1, line2) => line1.type.localeCompare(line2.type))
+            .sort((line1, line2) => line1.folder.localeCompare(line2.folder))
             .sort((line1, line2) => line1.project.localeCompare(line2.project));
 
         this._lines.forEach((line, i) => {
-            line.id = i + 1;
+            line.auto = i + 1;
         });
     }
 
@@ -196,6 +244,7 @@ class App {
             for (let i = 0; i < this._lines.length; ++i) {
                 const line = this._lines[i];
                 delete line.new;
+                delete line.changed;
 
                 await this._query('INSERT INTO `node` SET ?', line);
             }
@@ -234,6 +283,8 @@ class App {
 
                     if (line.new) {
                         fieldValue = fieldValue.green;
+                    } else if (line.changed) {
+                        fieldValue = fieldValue.yellow;
                     }
 
                     if (fieldTitle === 'project') {
@@ -272,13 +323,13 @@ class App {
     _printHelp() {
         write(
             '  Commands:\n' +
-            '    list -- print lines\n' +
+            '    l|list -- print lines\n' +
             '    add %PROJECT [%TYPE [%HOST]] -- add lines\n' +
             '    rm %ID|%PROJECT -- remove lines by ID or by project name\n' +
             '    clear -- clear up all lines\n' +
-            '    write -- write changes into database\n' +
+            '    w|write -- write changes into database\n' +
             '    help -- print this help\n' +
-            '    quit -- exit without saving\n'
+            '    q|quit -- exit without saving\n'
         );
     }
 }
